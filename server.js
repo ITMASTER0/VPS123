@@ -90,7 +90,7 @@ function reclaimPidFile(vm) {
   const result = command('sudo', ['-n', 'chown', `${user}:${user}`, vm.pidFile]);
   if (result.status !== 0) throw new Error(`QEMU started, but the VM PID file could not be made readable: ${result.stderr.trim()}`);
 }
-function sshPortReady(port) { return command('ssh-keyscan', ['-T', '2', '-p', String(port), '127.0.0.1'], { stdio: 'pipe' }).status === 0; }
+function sshPortReady(port) { const result = command('ssh-keyscan', ['-T', '2', '-p', String(port), '127.0.0.1']); return result.status === 0 && result.stdout.trim().length > 0; }
 async function attachVm(vm) {
   process.stdout.write(`\nWaiting for ${vm.name} SSH handshake`);
   for (let attempt = 0; attempt < 30 && !sshPortReady(vm.sshPort); attempt += 1) {
@@ -101,8 +101,8 @@ async function attachVm(vm) {
   console.log();
   if (!sshPortReady(vm.sshPort)) throw new Error(`VM is running, but SSH did not complete its handshake within 30 seconds on port ${vm.sshPort}. KVM acceleration may be required.`);
   console.log(`\x1b[32mConnecting to ${vm.name}. Exit the shell to return to the VM Maker.\x1b[0m`);
-  const result = spawnSync('ssh', ['-tt', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
-  if (result.status !== 0) throw new Error('SSH session ended with an error.');
+  const result = spawnSync('ssh', ['-tt', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
+  if (result.status !== 0) throw new Error(`SSH session ended with exit code ${result.status ?? 'unknown'}. Check the VM username and password.`);
 }
 async function downloadImage(image, target) { if (fs.existsSync(target)) return; const result = command('curl', ['-fL', '--retry', '3', '--progress-bar', image[1], '-o', target], { stdio: ['ignore', 'inherit', 'inherit'] }); if (result.status !== 0) throw new Error(`Could not download ${image[0]}.`); }
 function actualSpecs(vm) {
