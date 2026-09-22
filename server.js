@@ -79,6 +79,19 @@ async function attachVm(vm) {
   const result = spawnSync('ssh', ['-tt', '-o', 'StrictHostKeyChecking=accept-new', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
   if (result.status !== 0) throw new Error('SSH session ended with an error.');
 }
+function sshPortReady(port) { return command('bash', ['-c', `cat < /dev/null > /dev/tcp/127.0.0.1/${port}`]).status === 0; }
+async function attachVm(vm) {
+  process.stdout.write(`\nWaiting for ${vm.name} SSH to become ready`);
+  for (let attempt = 0; attempt < 60 && !sshPortReady(vm.sshPort); attempt += 1) {
+    process.stdout.write('.');
+    await wait(1000);
+  }
+  console.log();
+  if (!sshPortReady(vm.sshPort)) throw new Error(`VM is running, but SSH did not become ready on port ${vm.sshPort}.`);
+  console.log(`\x1b[32mConnecting to ${vm.name}. Exit the shell to return to the VM Maker.\x1b[0m`);
+  const result = spawnSync('ssh', ['-tt', '-o', 'StrictHostKeyChecking=accept-new', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
+  if (result.status !== 0) throw new Error('SSH session ended with an error.');
+}
 async function downloadImage(image, target) { if (fs.existsSync(target)) return; const result = command('curl', ['-fL', '--retry', '3', '--progress-bar', image[1], '-o', target], { stdio: ['ignore', 'inherit', 'inherit'] }); if (result.status !== 0) throw new Error(`Could not download ${image[0]}.`); }
 function actualSpecs(vm) {
   const running = vmRunning(vm);
