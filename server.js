@@ -42,7 +42,10 @@ function vmDir(name) { return path.join(ROOT, name); }
 function configPath(name) { return path.join(vmDir(name), 'vm.json'); }
 function readConfig(name) { return JSON.parse(fs.readFileSync(configPath(name), 'utf8')); }
 function allConfigs() { ensureTools(); return fs.existsSync(ROOT) ? fs.readdirSync(ROOT).filter(name => fs.existsSync(configPath(name))).map(readConfig) : []; }
-function vmPid(vm) { return fs.existsSync(vm.pidFile) ? Number(fs.readFileSync(vm.pidFile, 'utf8')) : 0; }
+function vmPid(vm) {
+  if (!fs.existsSync(vm.pidFile)) return 0;
+  try { return Number(fs.readFileSync(vm.pidFile, 'utf8')); } catch { return 0; }
+}
 function vmRunning(vm) {
   const pid = vmPid(vm);
   if (!pid) return false;
@@ -80,6 +83,12 @@ function launchQemu(args) {
   if (directKvmAccess()) return command('qemu-system-x86_64', args);
   if (canUseKvmWithSudo()) return command('sudo', ['-n', 'qemu-system-x86_64', '-runas', process.env.USER || 'codespace', ...args]);
   return command('qemu-system-x86_64', args);
+}
+function reclaimPidFile(vm) {
+  if (directKvmAccess() || !fs.existsSync(vm.pidFile)) return;
+  const user = process.env.USER || 'codespace';
+  const result = command('sudo', ['-n', 'chown', `${user}:${user}`, vm.pidFile]);
+  if (result.status !== 0) throw new Error(`QEMU started, but the VM PID file could not be made readable: ${result.stderr.trim()}`);
 }
 function sshPortReady(port) { return command('ssh-keyscan', ['-T', '2', '-p', String(port), '127.0.0.1'], { stdio: 'pipe' }).status === 0; }
 async function attachVm(vm) {
@@ -123,7 +132,7 @@ async function createVm() {
   const vm = { name, os: image[0], ram, cpu, diskGb, diskFormat: 'qcow2', disk, seed, pidFile, sshPort, username, imageUrl: image[1], base }; fs.writeFileSync(configPath(name), JSON.stringify(vm, null, 2));
   await startVm(vm); console.log('\n\x1b[32mReal VM created and started.\x1b[0m'); printSpecs(vm);
 }
-async function startVm(vm) { if (vmRunning(vm)) return false; const ramLimit = availableRamMb(); if (vm.ram > ramLimit) throw new Error(`VM needs ${vm.ram} MB, but only ${ramLimit} MB is safely available now. Stop another VM or choose a smaller VM.`); const acceleration = qemuAcceleration(); if (acceleration[0] === '-accel') console.log('\x1b[33mKVM is not available; using slow software emulation.\x1b[0m'); else if (!directKvmAccess()) console.log('\x1b[36mUsing KVM through sudo for fast boot.\x1b[0m'); const result = launchQemu([...acceleration, '-name', vm.name, '-m', String(vm.ram), '-smp', String(vm.cpu), '-drive', `file=${vm.disk},if=virtio,format=qcow2`, '-drive', `file=${vm.seed},if=virtio,media=cdrom,readonly=on`, '-netdev', `user,id=net0,hostfwd=tcp::${vm.sshPort}-:22`, '-device', 'virtio-net-pci,netdev=net0', '-pidfile', vm.pidFile, '-daemonize', '-display', 'none']); if (result.status !== 0) throw new Error(result.stderr.includes('Cannot allocate memory') ? `VM needs ${vm.ram} MB, but the host cannot allocate it. Choose a smaller VM.` : result.stderr.trim() || 'QEMU could not start the VM.'); await wait(500); if (!vmRunning(vm)) throw new Error('QEMU exited while starting the VM.'); return true; }
+async function startVm(vm) { if (vmRunning(vm)) return false; const ramLimit = availableRamMb(); if (vm.ram > ramLimit) throw new Error(`VM needs ${vm.ram} MB, but only ${ramLimit} MB is safely available now. Stop another VM or choose a smaller VM.`); const acceleration = qemuAcceleration(); if (acceleration[0] === '-accel') console.log('\x1b[33mKVM is not available; using slow software emulation.\x1b[0m'); else if (!directKvmAccess()) console.log('\x1b[36mUsing KVM through sudo for fast boot.\x1b[0m'); const result = launchQemu([...acceleration, '-name', vm.name, '-m', String(vm.ram), '-smp', String(vm.cpu), '-drive', `file=${vm.disk},if=virtio,format=qcow2`, '-drive', `file=${vm.seed},if=virtio,media=cdrom,readonly=on`, '-netdev', `user,id=net0,hostfwd=tcp::${vm.sshPort}-:22`, '-device', 'virtio-net-pci,netdev=net0', '-pidfile', vm.pidFile, '-daemonize', '-display', 'none']); if (result.status !== 0) throw new Error(result.stderr.includes('Cannot allocate memory') ? `VM needs ${vm.ram} MB, but the host cannot allocate it. Choose a smaller VM.` : result.stderr.trim() || 'QEMU could not start the VM.'); reclaimPidFile(vm); await wait(500); if (!vmRunning(vm)) throw new Error('QEMU exited while starting the VM.'); return true; }
 async function chooseVm(action) { showBanner(); const vms = allConfigs(); if (!vms.length) return console.log('No VMs found.'); console.table(vms.map(vm => ({ Name: vm.name, State: vmRunning(vm) ? 'running' : 'stopped', OS: vm.os, RAM: `${vm.ram} MB`, CPU: vm.cpu, SSH: vm.sshPort }))); const name = await ask('\nEnter VM name: '); const vm = vms.find(item => item.name === name); if (!vm) throw new Error('VM not found.'); await loading(`${action} ${name}`); if (action === 'start') { const started = await startVm(vm); console.log(`\n\x1b[32m${name} ${started ? 'started' : 'is already running'} successfully.\x1b[0m`); printSpecs(vm); await attachVm(vm); return; } if (action === 'stop') await stopVmProcess(vm); else if (action === 'restart') { await stopVmProcess(vm); await startVm(vm); } else throw new Error('Unknown VM action.'); printSpecs(vm); }
 async function inspectVm() { const vms = allConfigs(); if (!vms.length) return console.log('No VMs found.'); const name = await ask('Enter VM name: '); const vm = vms.find(item => item.name === name); if (!vm) throw new Error('VM not found.'); printSpecs(vm); }
 async function deleteVm() { const vms = allConfigs(); if (!vms.length) return console.log('No VMs found.'); const name = await ask('VM name to delete: '); const vm = vms.find(item => item.name === name); if (!vm) throw new Error('VM not found.'); const confirm = await ask('Type DELETE to confirm: '); if (confirm !== 'DELETE') return console.log('Delete cancelled.'); await stopVmProcess(vm); fs.rmSync(vmDir(name), { recursive: true, force: true }); console.log(`\n\x1b[32mDeleted ${name}.\x1b[0m`); }
