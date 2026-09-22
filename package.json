@@ -1,8 +1,8 @@
 {
-  "name": "nebula-vps-maker",
+  "name": "wavycloud-vm-maker",
   "version": "1.0.0",
   "private": true,
-  "description": "Nebula terminal Docker VPS maker",
+  "description": "WavyCloud terminal Docker VM maker",
   "scripts": { "start": "node server.js" },
   "engines": { "node": ">=18" }
 }

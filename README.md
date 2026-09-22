@@ -1,6 +1,6 @@
-# Nebula VPS Maker
+# WavyCloud VM Maker
 
-A simple terminal VPS maker for Docker.
+A simple terminal VM maker for Docker.
 
 ## Install
 
@@ -21,17 +21,17 @@ node server.js
 ## Menu
 
 ```text
-1) Create VPS
-2) List VPS
-3) Start VPS
-4) Stop VPS
-5) Restart VPS
-6) Inspect VPS
-7) Delete VPS
+1) Create VM
+2) List VMs
+3) Start VM
+4) Stop VM
+5) Restart VM
+6) Inspect VM
+7) Delete VM
 8) Show OS images
 9) Exit
 ```
 
-The VPS creator asks for the name, RAM, CPU, disk size, Linux image, username, and password. It creates a Docker container with the selected settings.
+The VM creator asks for the name, RAM, CPU, disk size, Linux image, username, and password. It creates a Docker container with the selected settings and prints the actual Docker specifications after creation.
 
 Available images include Ubuntu, Debian, Fedora, CentOS, Rocky Linux, AlmaLinux, openSUSE, Arch Linux, Kali Linux, Alpine Linux, and Docker tools.
