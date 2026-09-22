@@ -2,7 +2,7 @@ const readline = require('readline');
 const { spawnSync } = require('child_process');
 const os = require('os');
 
-const cli = readline.createInterface({ input: process.stdin, output: process.stdout });
+let cli;
 const ask = question => new Promise(resolve => cli.question(question, resolve));
 const state = new Map();
 const images = {
@@ -27,6 +27,26 @@ function showBanner() {
   console.log('\x1b[38;5;45m║\x1b[1;37m                 W A V Y C L O U D                      \x1b[38;5;45m║\x1b[0m');
   console.log('\x1b[38;5;45m║\x1b[38;5;213m                 VPS MAKER                             \x1b[38;5;45m║\x1b[0m');
   console.log('\x1b[38;5;45m╚══════════════════════════════════════════════════════════╝\x1b[0m');
+}
+async function startupBanner() {
+  const lines = [
+    ' _       __                 ____ _                 _ ',
+    '| |     / /___ _____ _   _ / ___| | ___  _   _  __| |',
+    '| | /\\ / / _ \\_  / | | | | |   | |/ _ \\| | | |/ _` |',
+    '| |/  V /  __// /| |_| | | |___| | (_) | |_| | (_| |',
+    '|_/\\__/\\___/___|\\__, |  \\____|_|\\___/ \\__,_|\\__,_|',
+    '                   |___/        VPS MAKER'
+  ];
+  console.log('\n');
+  for (const line of lines) {
+    for (const character of line) {
+      process.stdout.write(`\x1b[38;5;213m${character}\x1b[0m`);
+      await wait(5);
+    }
+    process.stdout.write('\n');
+    await wait(80);
+  }
+  await wait(200);
 }
 async function loadingAnimation(label) {
   process.stdout.write(`\n${label} `);
@@ -85,6 +105,13 @@ async function chooseVps(action) {
   const name = await ask('\nEnter VPS name: '); if (!servers.some(server => server.name === name)) throw new Error('VPS not found.');
   await loadingAnimation(`${action} ${name}`);
   const result = command('docker', [action, name]); if (result.status !== 0) throw new Error(result.stderr.trim() || `Docker could not ${action} ${name}.`);
+  if (action === 'start') {
+    const status = command('docker', ['inspect', '--format', '{{.State.Status}}', name]);
+    if (status.status !== 0 || status.stdout.trim() !== 'running') throw new Error(`Docker started ${name}, but it is not running.`);
+    console.log(`\n\x1b[32m${name} is running. Opening its live terminal...\x1b[0m`);
+    const terminal = spawnSync('docker', ['exec', '-it', name, '/bin/sh'], { stdio: 'inherit' });
+    if (terminal.status !== 0) console.log('\nReturned from the VPS terminal.');
+  }
   console.log(`\n\x1b[32m${action} completed for ${name}.\x1b[0m`);
 }
 async function inspectVps() {
@@ -96,6 +123,8 @@ async function inspectVps() {
   console.log(`\nName: ${details.Name.slice(1)}\nStatus: ${details.State.Status}\nImage: ${details.Config.Image}\nRAM: ${config['nebula.ram']} MB\nCPU: ${config['nebula.cpu']}\nDisk: ${config['nebula.disk']} GB\nUser label: ${config['nebula.user']}`);
 }
 async function main() {
+  await startupBanner();
+  cli = readline.createInterface({ input: process.stdin, output: process.stdout });
   while (true) {
     console.log('\n'); showBanner(); console.log('\x1b[38;5;213m────────────── VPS MAKER ──────────────\x1b[0m');
     console.log(' 1) Create VPS'); console.log(' 2) List VPS'); console.log(' 3) Start VPS'); console.log(' 4) Stop VPS'); console.log(' 5) Restart VPS'); console.log(' 6) Inspect VPS'); console.log(' 7) Delete VPS'); console.log(' 8) Show OS images'); console.log(' 9) Exit\n');
