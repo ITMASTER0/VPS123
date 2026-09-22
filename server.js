@@ -61,24 +61,19 @@ async function stopVmProcess(vm) {
   if (vmRunning(vm)) throw new Error(`VM ${vm.name} did not stop; its disk is still locked.`);
 }
 function availableCpus() { return Math.max(1, Math.min(16, os.cpus().length)); }
+function availableRamMb() {
+  const memory = fs.readFileSync('/proc/meminfo', 'utf8').match(/^MemAvailable:\s+(\d+) kB$/m);
+  let available = memory ? Number(memory[1]) / 1024 : os.totalmem() / 1024 / 1024;
+  const limit = fs.existsSync('/sys/fs/cgroup/memory.max') ? fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim() : 'max';
+  const current = fs.existsSync('/sys/fs/cgroup/memory.current') ? Number(fs.readFileSync('/sys/fs/cgroup/memory.current', 'utf8')) / 1024 / 1024 : 0;
+  if (limit !== 'max' && Number(limit) > 0) available = Math.min(available, Number(limit) / 1024 / 1024 - current);
+  return Math.max(512, Math.min(24576, Math.floor(Math.max(512, available - 512) / 256) * 256));
+}
 function showImages() { Object.entries(images).forEach(([number, image]) => console.log(`  ${number}. ${image[0]}\n     ${image[1]}`)); }
 function cloudConfig(username, password, packages) { return `#cloud-config\nusers:\n  - name: ${username}\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    groups: sudo\n    shell: /bin/bash\n    lock_passwd: false\nssh_pwauth: true\nchpasswd:\n  expire: false\n  list: |\n    ${username}:${password}\npackage_update: true\npackages:\n${packages.map(pkg => `  - ${pkg}`).join('\n')}\nruncmd:\n  - systemctl enable --now ssh || systemctl enable --now sshd || true\n`; }
 function metaData(name) { return `instance-id: ${name}\nlocal-hostname: ${name}\n`; }
 function freePort() { const used = new Set(allConfigs().map(vm => vm.sshPort)); for (let port = 2200; port < 2300; port += 1) if (!used.has(port)) return port; throw new Error('No free SSH ports available.'); }
 function qemuAcceleration() { try { fs.accessSync('/dev/kvm', fs.constants.R_OK | fs.constants.W_OK); return ['-enable-kvm']; } catch { return ['-accel', 'tcg,thread=multi']; } }
-function sshPortReady(port) { return command('bash', ['-c', `cat < /dev/null > /dev/tcp/127.0.0.1/${port}`]).status === 0; }
-async function attachVm(vm) {
-  process.stdout.write(`\nWaiting for ${vm.name} SSH to become ready`);
-  for (let attempt = 0; attempt < 60 && !sshPortReady(vm.sshPort); attempt += 1) {
-    process.stdout.write('.');
-    await wait(1000);
-  }
-  console.log();
-  if (!sshPortReady(vm.sshPort)) throw new Error(`VM is running, but SSH did not become ready on port ${vm.sshPort}.`);
-  console.log(`\x1b[32mConnecting to ${vm.name}. Exit the shell to return to the VM Maker.\x1b[0m`);
-  const result = spawnSync('ssh', ['-tt', '-o', 'StrictHostKeyChecking=accept-new', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
-  if (result.status !== 0) throw new Error('SSH session ended with an error.');
-}
 function sshPortReady(port) { return command('bash', ['-c', `cat < /dev/null > /dev/tcp/127.0.0.1/${port}`]).status === 0; }
 async function attachVm(vm) {
   process.stdout.write(`\nWaiting for ${vm.name} SSH to become ready`);
@@ -106,7 +101,7 @@ function printSpecs(vm) { console.table([actualSpecs(vm)]); }
 async function createVm() {
   ensureTools(); showBanner(); console.log('\x1b[38;5;213m──────────── CONFIGURE REAL VM ────────────\x1b[0m\n');
   const name = await ask('VM name (2-32 letters, numbers, . _ -): '); if (!validName(name)) throw new Error('Invalid VM name.'); if (fs.existsSync(vmDir(name))) throw new Error('A VM with that name already exists.');
-  const ram = Number(await ask('RAM in MB (512-24576): ')); if (!Number.isInteger(ram) || ram < 512 || ram > 24576) throw new Error('RAM must be a whole number from 512 to 24576 MB.');
+  const ramLimit = availableRamMb(); const ram = Number(await ask(`RAM in MB (512-${ramLimit}, available now): `)); if (!Number.isInteger(ram) || ram < 512 || ram > ramLimit) throw new Error(`RAM must be a whole number from 512 to ${ramLimit} MB on this host.`);
   const maxCpu = availableCpus(); const cpu = Number(await ask(`CPU cores (1-${maxCpu}): `)); if (!Number.isInteger(cpu) || cpu < 1 || cpu > maxCpu) throw new Error(`CPU must be a whole number from 1 to ${maxCpu}.`);
   const diskGb = Number(await ask('Disk size in GB (8-200): ')); if (!Number.isInteger(diskGb) || diskGb < 8 || diskGb > 200) throw new Error('Disk must be a whole number from 8 to 200 GB.');
   showImages(); const image = images[await ask('Choose real image number: ')]; if (!image) throw new Error('Choose a listed image.');
@@ -120,7 +115,7 @@ async function createVm() {
   const vm = { name, os: image[0], ram, cpu, diskGb, diskFormat: 'qcow2', disk, seed, pidFile, sshPort, username, imageUrl: image[1], base }; fs.writeFileSync(configPath(name), JSON.stringify(vm, null, 2));
   await startVm(vm); console.log('\n\x1b[32mReal VM created and started.\x1b[0m'); printSpecs(vm);
 }
-async function startVm(vm) { if (vmRunning(vm)) return false; const result = command('qemu-system-x86_64', [...qemuAcceleration(), '-name', vm.name, '-m', String(vm.ram), '-smp', String(vm.cpu), '-drive', `file=${vm.disk},if=virtio,format=qcow2`, '-drive', `file=${vm.seed},if=virtio,media=cdrom,readonly=on`, '-netdev', `user,id=net0,hostfwd=tcp::${vm.sshPort}-:22`, '-device', 'virtio-net-pci,netdev=net0', '-pidfile', vm.pidFile, '-daemonize', '-display', 'none']); if (result.status !== 0) throw new Error(result.stderr.trim() || 'QEMU could not start the VM.'); await wait(500); if (!vmRunning(vm)) throw new Error('QEMU exited while starting the VM.'); return true; }
+async function startVm(vm) { if (vmRunning(vm)) return false; const ramLimit = availableRamMb(); if (vm.ram > ramLimit) throw new Error(`VM needs ${vm.ram} MB, but only ${ramLimit} MB is safely available now. Stop another VM or choose a smaller VM.`); const result = command('qemu-system-x86_64', [...qemuAcceleration(), '-name', vm.name, '-m', String(vm.ram), '-smp', String(vm.cpu), '-drive', `file=${vm.disk},if=virtio,format=qcow2`, '-drive', `file=${vm.seed},if=virtio,media=cdrom,readonly=on`, '-netdev', `user,id=net0,hostfwd=tcp::${vm.sshPort}-:22`, '-device', 'virtio-net-pci,netdev=net0', '-pidfile', vm.pidFile, '-daemonize', '-display', 'none']); if (result.status !== 0) throw new Error(result.stderr.includes('Cannot allocate memory') ? `VM needs ${vm.ram} MB, but the host cannot allocate it. Choose a smaller VM.` : result.stderr.trim() || 'QEMU could not start the VM.'); await wait(500); if (!vmRunning(vm)) throw new Error('QEMU exited while starting the VM.'); return true; }
 async function chooseVm(action) { showBanner(); const vms = allConfigs(); if (!vms.length) return console.log('No VMs found.'); console.table(vms.map(vm => ({ Name: vm.name, State: vmRunning(vm) ? 'running' : 'stopped', OS: vm.os, RAM: `${vm.ram} MB`, CPU: vm.cpu, SSH: vm.sshPort }))); const name = await ask('\nEnter VM name: '); const vm = vms.find(item => item.name === name); if (!vm) throw new Error('VM not found.'); await loading(`${action} ${name}`); if (action === 'start') { const started = await startVm(vm); console.log(`\n\x1b[32m${name} ${started ? 'started' : 'is already running'} successfully.\x1b[0m`); printSpecs(vm); await attachVm(vm); return; } if (action === 'stop') await stopVmProcess(vm); else if (action === 'restart') { await stopVmProcess(vm); await startVm(vm); } else throw new Error('Unknown VM action.'); printSpecs(vm); }
 async function inspectVm() { const vms = allConfigs(); if (!vms.length) return console.log('No VMs found.'); const name = await ask('Enter VM name: '); const vm = vms.find(item => item.name === name); if (!vm) throw new Error('VM not found.'); printSpecs(vm); }
 async function deleteVm() { const vms = allConfigs(); if (!vms.length) return console.log('No VMs found.'); const name = await ask('VM name to delete: '); const vm = vms.find(item => item.name === name); if (!vm) throw new Error('VM not found.'); const confirm = await ask('Type DELETE to confirm: '); if (confirm !== 'DELETE') return console.log('Delete cancelled.'); await stopVmProcess(vm); fs.rmSync(vmDir(name), { recursive: true, force: true }); console.log(`\n\x1b[32mDeleted ${name}.\x1b[0m`); }
