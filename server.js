@@ -74,17 +74,17 @@ function cloudConfig(username, password, packages) { return `#cloud-config\nuser
 function metaData(name) { return `instance-id: ${name}\nlocal-hostname: ${name}\n`; }
 function freePort() { const used = new Set(allConfigs().map(vm => vm.sshPort)); for (let port = 2200; port < 2300; port += 1) if (!used.has(port)) return port; throw new Error('No free SSH ports available.'); }
 function qemuAcceleration() { try { fs.accessSync('/dev/kvm', fs.constants.R_OK | fs.constants.W_OK); return ['-enable-kvm']; } catch { return ['-accel', 'tcg,thread=multi']; } }
-function sshPortReady(port) { return command('bash', ['-c', `cat < /dev/null > /dev/tcp/127.0.0.1/${port}`]).status === 0; }
+function sshPortReady(port) { return command('ssh-keyscan', ['-T', '2', '-p', String(port), '127.0.0.1'], { stdio: 'pipe' }).status === 0; }
 async function attachVm(vm) {
-  process.stdout.write(`\nWaiting for ${vm.name} SSH to become ready`);
-  for (let attempt = 0; attempt < 60 && !sshPortReady(vm.sshPort); attempt += 1) {
-    process.stdout.write('.');
+  process.stdout.write(`\nWaiting for ${vm.name} SSH handshake`);
+  for (let attempt = 0; attempt < 120 && !sshPortReady(vm.sshPort); attempt += 1) {
+    if (attempt % 5 === 0) process.stdout.write(` ${attempt}s`);
     await wait(1000);
   }
   console.log();
-  if (!sshPortReady(vm.sshPort)) throw new Error(`VM is running, but SSH did not become ready on port ${vm.sshPort}.`);
+  if (!sshPortReady(vm.sshPort)) throw new Error(`VM is running, but SSH did not complete its handshake on port ${vm.sshPort}. Check the VM console or cloud-init logs.`);
   console.log(`\x1b[32mConnecting to ${vm.name}. Exit the shell to return to the VM Maker.\x1b[0m`);
-  const result = spawnSync('ssh', ['-tt', '-o', 'StrictHostKeyChecking=accept-new', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
+  const result = spawnSync('ssh', ['-tt', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', '-p', String(vm.sshPort), `${vm.username}@127.0.0.1`], { stdio: 'inherit' });
   if (result.status !== 0) throw new Error('SSH session ended with an error.');
 }
 async function downloadImage(image, target) { if (fs.existsSync(target)) return; const result = command('curl', ['-fL', '--retry', '3', '--progress-bar', image[1], '-o', target], { stdio: ['ignore', 'inherit', 'inherit'] }); if (result.status !== 0) throw new Error(`Could not download ${image[0]}.`); }
