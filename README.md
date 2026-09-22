@@ -1,10 +1,17 @@
 # WavyCloud VM Maker
 
-A simple terminal VM maker for Docker.
+A terminal VM maker for real QEMU/KVM virtual machines.
 
 ## Install
 
-Install Node.js and Docker first. Then run this command:
+Install Node.js, QEMU, and KVM first. On Ubuntu/Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils
+```
+
+Then run:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ITMASTER0/VPS123/main/install.sh)
@@ -13,8 +20,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ITMASTER0/VPS123/main/instal
 ## Run manually
 
 ```bash
-git clone https://github.com/ITMASTER0/VPS123.git nebula-vps-maker
-cd nebula-vps-maker
+git clone https://github.com/ITMASTER0/VPS123.git wavycloud-vm-maker
+cd wavycloud-vm-maker
 node server.js
 ```
 
@@ -32,6 +39,6 @@ node server.js
 9) Exit
 ```
 
-The VM creator asks for the name, RAM, CPU, disk size, Linux image, username, and password. It creates a Docker container with the selected settings and prints the actual Docker specifications after creation.
+The VM creator asks for the name, RAM, CPU, disk size, Linux image, username, and password. It downloads a real cloud disk image, creates a qcow2 VM disk, injects cloud-init, boots QEMU, and prints the actual VM specifications and SSH command.
 
-Available images include Ubuntu, Debian, Fedora, CentOS, Rocky Linux, AlmaLinux, openSUSE, Arch Linux, Kali Linux, Alpine Linux, and Docker tools.
+Available images are pulled from real public registries and include Ubuntu, Debian, Fedora, CentOS Stream, Rocky Linux, AlmaLinux, openSUSE, Arch Linux, Kali Linux, Alpine Linux, and Node.js 22 with npm.
