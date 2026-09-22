@@ -134,8 +134,10 @@ async function inspectVm() {
   console.log(`\nName: ${details.Name.slice(1)}\nStatus: ${details.State.Status}\nImage: ${details.Config.Image}\nRAM: ${config['nebula.ram']} MB\nCPU: ${config['nebula.cpu']}\nDisk: ${config['nebula.disk']} GB\nUser label: ${config['nebula.user']}`);
 }
 async function main() {
-  await startupBanner();
   cli = readline.createInterface({ input: process.stdin, output: process.stdout });
+  cli.pause();
+  await startupBanner();
+  cli.resume();
   while (true) {
     console.log('\n'); showBanner(); console.log('\x1b[38;5;213m────────────── VM MAKER ──────────────\x1b[0m');
     console.log(' 1) Create VM'); console.log(' 2) List VMs'); console.log(' 3) Start VM'); console.log(' 4) Stop VM'); console.log(' 5) Restart VM'); console.log(' 6) Inspect VM'); console.log(' 7) Delete VM'); console.log(' 8) Show OS images'); console.log(' 9) Exit\n');
