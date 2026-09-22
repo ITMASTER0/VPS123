@@ -21,6 +21,22 @@ const images = {
 
 function command(name, args) { return spawnSync(name, args, { encoding: 'utf8' }); }
 function dockerAvailable() { return command('docker', ['info']).status === 0; }
+function wait(milliseconds) { return new Promise(resolve => setTimeout(resolve, milliseconds)); }
+function showBanner() {
+  console.log('\x1b[38;5;45m╔══════════════════════════════════════════════════════════╗\x1b[0m');
+  console.log('\x1b[38;5;45m║\x1b[1;37m                 W A V Y C L O U D                      \x1b[38;5;45m║\x1b[0m');
+  console.log('\x1b[38;5;45m║\x1b[38;5;213m                 VPS MAKER                             \x1b[38;5;45m║\x1b[0m');
+  console.log('\x1b[38;5;45m╚══════════════════════════════════════════════════════════╝\x1b[0m');
+}
+async function loadingAnimation(label) {
+  process.stdout.write(`\n${label} `);
+  for (const character of ['|', '/', '-', '\\']) {
+    process.stdout.write(`\x1b[38;5;213m${character}\x1b[0m`);
+    await wait(45);
+    process.stdout.write('\b');
+  }
+  console.log('done.');
+}
 function availableCpus() {
   const result = command('docker', ['info', '--format', '{{.NCPU}}']);
   const dockerCpus = Number(result.stdout.trim());
@@ -37,6 +53,7 @@ function listVps() {
   return servers;
 }
 async function createVps() {
+  showBanner();
   console.log('\x1b[38;5;213m──────────── CONFIGURE YOUR VPS ────────────\x1b[0m\n');
   if (!dockerAvailable()) throw new Error('Docker is required. Install Docker and make sure your user can run docker commands.');
   let name = await ask('VPS name (2-32 letters, numbers, . _ -): ');
@@ -61,15 +78,17 @@ async function createVps() {
   if (result.status !== 0) throw new Error(result.stderr.trim() || 'Docker could not create the VPS.');
   state.set(name, { passwordSet: true, passwordLength: password.length });
   console.log(`\n\x1b[32mVPS created successfully.\x1b[0m\nContainer: ${name}\nImage: ${image[0]}\nContainer ID: ${result.stdout.trim().slice(0, 12)}\nData volume: ${volume}`);
-  console.log('\x1b[33mNote: this is a local Docker VPS container. It is not a public cloud server or SSH service.\x1b[0m');
 }
 async function chooseVps(action) {
+  showBanner();
   const servers = listVps(); if (!servers.length) return;
   const name = await ask('\nEnter VPS name: '); if (!servers.some(server => server.name === name)) throw new Error('VPS not found.');
-  const result = command('docker', [action, name]); if (result.status !== 0) throw new Error(result.stderr.trim());
+  await loadingAnimation(`${action} ${name}`);
+  const result = command('docker', [action, name]); if (result.status !== 0) throw new Error(result.stderr.trim() || `Docker could not ${action} ${name}.`);
   console.log(`\n\x1b[32m${action} completed for ${name}.\x1b[0m`);
 }
 async function inspectVps() {
+  showBanner();
   const servers = listVps(); if (!servers.length) return;
   const name = await ask('\nEnter VPS name: '); const result = command('docker', ['inspect', name]);
   if (result.status !== 0) throw new Error(result.stderr.trim());
@@ -78,18 +97,18 @@ async function inspectVps() {
 }
 async function main() {
   while (true) {
-    console.log('\n\x1b[38;5;213m────────────── VPS MAKER ──────────────\x1b[0m');
+    console.log('\n'); showBanner(); console.log('\x1b[38;5;213m────────────── VPS MAKER ──────────────\x1b[0m');
     console.log(' 1) Create VPS'); console.log(' 2) List VPS'); console.log(' 3) Start VPS'); console.log(' 4) Stop VPS'); console.log(' 5) Restart VPS'); console.log(' 6) Inspect VPS'); console.log(' 7) Delete VPS'); console.log(' 8) Show OS images'); console.log(' 9) Exit\n');
     try {
       const choice = await ask('Select -> ');
       if (choice === '1') await createVps();
-      else if (choice === '2') listVps();
+      else if (choice === '2') { showBanner(); listVps(); }
       else if (choice === '3') await chooseVps('start');
       else if (choice === '4') await chooseVps('stop');
       else if (choice === '5') await chooseVps('restart');
       else if (choice === '6') await inspectVps();
       else if (choice === '7') { const name = await ask('VPS name to delete: '); const confirm = await ask('Type DELETE to confirm: '); if (confirm !== 'DELETE') console.log('Delete cancelled.'); else { const result = command('docker', ['rm', '-f', name]); if (result.status !== 0) throw new Error(result.stderr.trim()); command('docker', ['volume', 'rm', `nebula-${name}-data`]); console.log(`\n\x1b[32mDeleted ${name}.\x1b[0m`); } }
-      else if (choice === '8') showImages();
+      else if (choice === '8') { showBanner(); showImages(); }
       else if (choice === '9') break;
       else console.log('Choose a number from 1 to 9.');
       if (choice !== '9') await ask('\nPress Enter to return to the VPS Maker...');
