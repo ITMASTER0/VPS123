@@ -67,7 +67,15 @@ function metaData(name) { return `instance-id: ${name}\nlocal-hostname: ${name}\
 function freePort() { const used = new Set(allConfigs().map(vm => vm.sshPort)); for (let port = 2200; port < 2300; port += 1) if (!used.has(port)) return port; throw new Error('No free SSH ports available.'); }
 function qemuAcceleration() { try { fs.accessSync('/dev/kvm', fs.constants.R_OK | fs.constants.W_OK); return ['-enable-kvm']; } catch { return ['-accel', 'tcg,thread=multi']; } }
 async function downloadImage(image, target) { if (fs.existsSync(target)) return; const result = command('curl', ['-fL', '--retry', '3', '--progress-bar', image[1], '-o', target], { stdio: ['ignore', 'inherit', 'inherit'] }); if (result.status !== 0) throw new Error(`Could not download ${image[0]}.`); }
-function actualSpecs(vm) { const info = command('qemu-img', ['info', '--output=json', vm.disk]); if (info.status !== 0) throw new Error(info.stderr.trim()); const diskInfo = JSON.parse(info.stdout); return { Name: vm.name, State: vmRunning(vm) ? 'running' : 'stopped', OS: vm.os, RAM: `${vm.ram} MB`, CPU: vm.cpu, 'Disk maximum': `${vm.diskGb} GB`, 'Disk format': diskInfo.format, SSH: `ssh -p ${vm.sshPort} ${vm.username}@127.0.0.1` }; }
+function actualSpecs(vm) {
+  const running = vmRunning(vm);
+  let diskFormat = vm.diskFormat || 'qcow2';
+  if (!running) {
+    const info = command('qemu-img', ['info', '--output=json', vm.disk]);
+    if (info.status === 0) diskFormat = JSON.parse(info.stdout).format;
+  }
+  return { Name: vm.name, State: running ? 'running' : 'stopped', OS: vm.os, RAM: `${vm.ram} MB`, CPU: vm.cpu, 'Disk maximum': `${vm.diskGb} GB`, 'Disk format': diskFormat, SSH: `ssh -p ${vm.sshPort} ${vm.username}@127.0.0.1` };
+}
 function printSpecs(vm) { console.table([actualSpecs(vm)]); }
 async function createVm() {
   ensureTools(); showBanner(); console.log('\x1b[38;5;213m──────────── CONFIGURE REAL VM ────────────\x1b[0m\n');
@@ -83,7 +91,7 @@ async function createVm() {
   await loading(`Downloading ${image[0]}`); await downloadImage(image, base); const imageInfo = command('qemu-img', ['info', '--output=json', base]); if (imageInfo.status !== 0) throw new Error(imageInfo.stderr.trim());
   const format = JSON.parse(imageInfo.stdout).format; const resized = command('qemu-img', ['create', '-f', 'qcow2', '-F', format, '-b', base, disk, `${diskGb}G`]); if (resized.status !== 0) throw new Error(resized.stderr.trim());
   const userData = path.join(dir, 'user-data'); const meta = path.join(dir, 'meta-data'); fs.writeFileSync(userData, cloudConfig(username, password, image[2])); fs.writeFileSync(meta, metaData(name)); const seedResult = command('cloud-localds', [seed, userData, meta]); if (seedResult.status !== 0) throw new Error(seedResult.stderr.trim());
-  const vm = { name, os: image[0], ram, cpu, diskGb, disk, seed, pidFile, sshPort, username, imageUrl: image[1], base }; fs.writeFileSync(configPath(name), JSON.stringify(vm, null, 2));
+  const vm = { name, os: image[0], ram, cpu, diskGb, diskFormat: 'qcow2', disk, seed, pidFile, sshPort, username, imageUrl: image[1], base }; fs.writeFileSync(configPath(name), JSON.stringify(vm, null, 2));
   await startVm(vm); console.log('\n\x1b[32mReal VM created and started.\x1b[0m'); printSpecs(vm);
 }
 async function startVm(vm) { if (vmRunning(vm)) return false; const result = command('qemu-system-x86_64', [...qemuAcceleration(), '-name', vm.name, '-m', String(vm.ram), '-smp', String(vm.cpu), '-drive', `file=${vm.disk},if=virtio,format=qcow2`, '-drive', `file=${vm.seed},if=virtio,media=cdrom,readonly=on`, '-netdev', `user,id=net0,hostfwd=tcp::${vm.sshPort}-:22`, '-device', 'virtio-net-pci,netdev=net0', '-pidfile', vm.pidFile, '-daemonize', '-display', 'none']); if (result.status !== 0) throw new Error(result.stderr.trim() || 'QEMU could not start the VM.'); await wait(500); if (!vmRunning(vm)) throw new Error('QEMU exited while starting the VM.'); return true; }
